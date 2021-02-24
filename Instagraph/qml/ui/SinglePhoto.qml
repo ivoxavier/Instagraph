@@ -18,9 +18,14 @@ Page {
     property var photoId
 
     property var last_like_id
+    property var last_save_id
+
+    property bool list_loading: false
 
     function mediaDataFinished(data) {
-        worker.sendMessage({'feed': 'singlePhotoPage', 'obj': data.items, 'model': singlePhotoModel, 'commentsModel': singlePhotoCommentsModel, 'clear_model': true})
+        worker.sendMessage({'feed': 'singlePhotoPage', 'obj': data.items, 'model': singlePhotoModel, 'clear_model': true})
+
+        list_loading = false
     }
 
     WorkerScript {
@@ -35,15 +40,17 @@ Page {
         instagram.infoMedia(photoId);
     }
 
+    function getMedia()
+    {
+        singlePhotoModel.clear()
+        instagram.infoMedia(photoId);
+    }
+
     BouncingProgressBar {
         id: bouncingProgress
         z: 10
         anchors.top: singlephotopage.header.bottom
         visible: instagram.busy
-    }
-
-    ListModel {
-        id: singlePhotoCommentsModel
     }
 
     ListModel {
@@ -54,9 +61,7 @@ Page {
         id: homePhotosList
         anchors {
             left: parent.left
-            leftMargin: units.gu(1)
             right: parent.right
-            rightMargin: units.gu(1)
             bottom: parent.bottom
             bottomMargin: bottomMenu.height
             top: singlephotopage.header.bottom
@@ -68,7 +73,14 @@ Page {
         delegate: ListFeedDelegate {
             id: homePhotosDelegate
             thismodel: singlePhotoModel
-            thiscommentsmodel: singlePhotoCommentsModel
+        }
+        PullToRefresh {
+            id: pullToRefresh
+            refreshing: list_loading && singlePhotoModel.count == 0
+            onRefresh: {
+                list_loading = true
+                getMedia()
+            }
         }
     }
 

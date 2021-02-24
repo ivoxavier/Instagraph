@@ -13,6 +13,7 @@
 #include <QImage>
 #include <QDataStream>
 #include <QUrl>
+#include <QUrlQuery>
 
 #include <QDebug>
 
@@ -37,8 +38,6 @@ Instagram::Instagram(QObject *parent)
     this->m_uuid = uuid.createUuid().toString();
 
     this->m_device_id = this->generateDeviceId();
-
-    this->setUser();
 }
 
 bool Instagram::busy() const
@@ -75,7 +74,7 @@ QString Instagram::generateDeviceId()
 }
 
 
-void Instagram::setUser()
+void Instagram::setUser(bool force)
 {
     if(this->m_username.length() == 0 or this->m_password.length() == 0)
     {
@@ -83,27 +82,47 @@ void Instagram::setUser()
     }
     else
     {
+
         QFile f_cookie(m_data_path.absolutePath()+"/cookies.dat");
         QFile f_userId(m_data_path.absolutePath()+"/userId.dat");
         QFile f_token(m_data_path.absolutePath()+"/token.dat");
 
         if(f_cookie.exists() && f_userId.exists() && f_token.exists())
         {
-            this->m_isLoggedIn = true;
-            this->m_username_id = f_userId.readAll().trimmed();
-            this->m_rank_token = this->m_username_id+"_"+this->m_uuid;
-            this->m_token = f_token.readAll().trimmed();
+            f_userId.open(QFile::ReadOnly);
+            QTextStream f_userId_d(&f_userId);
 
-            this->doLogin();
+            f_token.open(QFile::ReadOnly);
+            QTextStream f_token_d(&f_token);
+
+            this->m_isLoggedIn = true;
+            this->m_username_id = f_userId_d.readAll().trimmed();
+            this->m_rank_token = this->m_username_id+"_"+this->m_uuid;
+            this->m_token = f_token_d.readAll().trimmed();
+
+            if (force == true) {
+                this->doLogin();
+            } else {
+                QVariant a;
+                emit profileConnected(a);
+            }
+        } else {
+            emit profileConnectedFail();
         }
     }
 }
 
-void Instagram::login(bool forse)
+void Instagram::login(bool forse, QString username, QString password, bool set)
 {
-    if(!this->m_isLoggedIn or forse)
-    {
-        this->setUser();
+    if (set == true) {
+        this->m_username = username;
+        this->m_password = password;
+    }
+
+    if (forse == false) {
+        this->setUser(false);
+    } else if(!this->m_isLoggedIn or forse) {
+        this->setUser(true);
 
         Instagram::syncFeatures(true);
 
@@ -170,17 +189,45 @@ void Instagram::doLogin()
     QObject::connect(request,SIGNAL(replySrtingReady(QVariant)),this,SLOT(profileConnect(QVariant)));
 }
 
+void Instagram::confirm2Factor(QString code, QString identifier, QString method)
+{
+    m_busy = true;
+    emit busyChanged();
+
+    InstagramRequest *request = new InstagramRequest();
+
+    QJsonObject data;
+        data.insert("verification_method",    method);
+        data.insert("verification_code",    code);
+        data.insert("two_factor_identifier",    identifier);
+        data.insert("_csrftoken",   "Set-Cookie: csrftoken="+this->m_token);
+        data.insert("username",     this->m_username);
+        data.insert("password",     this->m_password);
+        data.insert("guid",         this->m_uuid);
+        data.insert("device_id",    this->m_device_id);
+
+    QString signature = request->generateSignature(data);
+    request->request("accounts/two_factor_login/",signature.toUtf8());
+
+    QObject::connect(request,SIGNAL(replySrtingReady(QVariant)),this,SLOT(profileConnect(QVariant)));
+
+    m_busy = false;
+    emit busyChanged();
+}
+
 void Instagram::profileConnect(QVariant profile)
 {
     QJsonDocument profile_doc = QJsonDocument::fromJson(profile.toString().toUtf8());
     QJsonObject profile_obj = profile_doc.object();
 
-    //qDebug() << "Reply: " << profile_obj;
-
     if(profile_obj["status"].toString().toUtf8() == "fail")
     {
-        emit error(profile_obj["message"].toString().toUtf8());
-        emit profileConnectedFail();
+        if (profile_obj.contains("two_factor_required") && profile_obj["two_factor_required"] == true) {
+            emit twoFactorRequired(profile_obj);
+        } else {
+            emit error(profile_obj["message"].toString().toUtf8());
+            emit profileConnectedFail();
+        }
     }
     else
     {
@@ -190,6 +237,20 @@ void Instagram::profileConnect(QVariant profile)
         this->m_isLoggedIn = true;
         this->m_username_id = QString::number(user["pk"].toDouble(),'g', 10);
         this->m_rank_token = this->m_username_id+"_"+this->m_uuid;
+
+        // save username_id
+        QFile fu(m_data_path.absolutePath()+"/userId.dat");
+        fu.open(QIODevice::ReadWrite);
+        QTextStream su(&fu);
+        su << this->m_username_id << endl;
+        fu.close();
+
+        // save token
+        QFile ft(m_data_path.absolutePath()+"/token.dat");
+        ft.open(QIODevice::ReadWrite);
+        QTextStream st(&ft);
+        st << this->m_token << endl;
+        ft.close();
 
         this->syncFeatures();
         this->autoCompleteUserList();
@@ -406,14 +467,7 @@ void Instagram::editMedia(QString mediaId, QString captionText)
 void Instagram::infoMedia(QString mediaId)
 {
     InstagramRequest *infoMediaRequest = new InstagramRequest();
-    QJsonObject data;
-        data.insert("_uuid",        this->m_uuid);
-        data.insert("_uid",         this->m_username_id);
-        data.insert("_csrftoken",   "Set-Cookie: csrftoken="+this->m_token);
-        data.insert("media_id", mediaId);
-
-    QString signature = infoMediaRequest->generateSignature(data);
-    infoMediaRequest->request("media/"+mediaId+"/info/",signature.toUtf8());
+    infoMediaRequest->request("media/"+mediaId+"/info/?",NULL,false,true);
     QObject::connect(infoMediaRequest,SIGNAL(replySrtingReady(QVariant)),this,SIGNAL(mediaInfoReady(QVariant)));
 }
 
@@ -442,6 +496,30 @@ void Instagram::removeSelftag(QString mediaId)
     QString signature = removeSelftagRequest->generateSignature(data);
     removeSelftagRequest->request("usertags/"+mediaId+"/remove/",signature.toUtf8());
     QObject::connect(removeSelftagRequest,SIGNAL(replySrtingReady(QVariant)),this,SIGNAL(removeSelftagDone(QVariant)));
+}
+
+void Instagram::enableMediaComments(QString mediaId)
+{
+    InstagramRequest *enableMediaCommentsRequest = new InstagramRequest();
+    QJsonObject data;
+        data.insert("_uuid",        this->m_uuid);
+        data.insert("_csrftoken",   "Set-Cookie: csrftoken="+this->m_token);
+
+    QString signature = enableMediaCommentsRequest->generateSignature(data);
+    enableMediaCommentsRequest->request("media/"+mediaId+"/enable_comments/",signature.toUtf8());
+    QObject::connect(enableMediaCommentsRequest,SIGNAL(replySrtingReady(QVariant)),this,SIGNAL(enableMediaCommentsReady(QVariant)));
+}
+
+void Instagram::disableMediaComments(QString mediaId)
+{
+    InstagramRequest *enableMediaCommentsRequest = new InstagramRequest();
+    QJsonObject data;
+        data.insert("_uuid",        this->m_uuid);
+        data.insert("_csrftoken",   "Set-Cookie: csrftoken="+this->m_token);
+
+    QString signature = enableMediaCommentsRequest->generateSignature(data);
+    enableMediaCommentsRequest->request("media/"+mediaId+"/disable_comments/",signature.toUtf8());
+    QObject::connect(enableMediaCommentsRequest,SIGNAL(replySrtingReady(QVariant)),this,SIGNAL(disableMediaCommentsReady(QVariant)));
 }
 
 void Instagram::postComment(QString mediaId, QString commentText)
@@ -503,14 +581,99 @@ void Instagram::unLikeComment(QString commentId)
     QObject::connect(unLikeCommentRequest,SIGNAL(replySrtingReady(QVariant)),this,SIGNAL(commentUnLiked(QVariant)));
 }
 
-//FIXME changeProfilePicture is not public yeat. Give me few weeks to optimize code
-void Instagram::changeProfilePicture(QFile *photo)
+void Instagram::saveMedia(QString mediaId)
 {
+    InstagramRequest *saveMediaRequest = new InstagramRequest();
+    QJsonObject data;
+        data.insert("_uuid",        this->m_uuid);
+        data.insert("_uid",         this->m_username_id);
+        data.insert("_csrftoken",   "Set-Cookie: csrftoken="+this->m_token);
 
+    QString signature = saveMediaRequest->generateSignature(data);
+    saveMediaRequest->request("media/"+mediaId+"/save/",signature.toUtf8());
+    QObject::connect(saveMediaRequest,SIGNAL(replySrtingReady(QVariant)),this,SIGNAL(saveMediaDataReady(QVariant)));
+}
+
+void Instagram::unsaveMedia(QString mediaId)
+{
+    InstagramRequest *unsaveMediaRequest = new InstagramRequest();
+    QJsonObject data;
+        data.insert("_uuid",        this->m_uuid);
+        data.insert("_uid",         this->m_username_id);
+        data.insert("_csrftoken",   "Set-Cookie: csrftoken="+this->m_token);
+
+    QString signature = unsaveMediaRequest->generateSignature(data);
+    unsaveMediaRequest->request("media/"+mediaId+"/unsave/",signature.toUtf8());
+    QObject::connect(unsaveMediaRequest,SIGNAL(replySrtingReady(QVariant)),this,SIGNAL(unsaveMediaDataReady(QVariant)));
+}
+
+void Instagram::getSavedFeed(QString max_id)
+{
+    QString target ="feed/saved/";
+
+    if(max_id.length() > 0)
+    {
+        target += "?max_id="+max_id;
+    }
+
+    InstagramRequest *getSavedFeedRequest = new InstagramRequest();
+    QJsonObject data;
+        data.insert("_uuid",        this->m_uuid);
+        data.insert("_uid",         this->m_username_id);
+        data.insert("_csrftoken",   "Set-Cookie: csrftoken="+this->m_token);
+
+    QString signature = getSavedFeedRequest->generateSignature(data);
+    getSavedFeedRequest->request(target,signature.toUtf8());
+    QObject::connect(getSavedFeedRequest,SIGNAL(replySrtingReady(QVariant)),this,SIGNAL(getSavedFeedDataReady(QVariant)));
+}
+
+void Instagram::changeProfilePicture(QString path)
+{
+    m_busy = true;
+    emit busyChanged();
+
+    QFile image(path);
+    image.open(QIODevice::ReadOnly);
+    QByteArray dataStream = image.readAll();
+
+    QString boundary = this->m_uuid;
+
+    /*Body build*/
+    QByteArray body = "";
+
+    body += "--"+boundary+"\r\n";
+    body += "Content-Disposition: form-data; name=\"_uuid\"\r\n\r\n";
+    body += this->m_uuid.replace("{","").replace("}","")+"\r\n";
+
+    body += "--"+boundary+"\r\n";
+    body += "Content-Disposition: form-data; name=\"_csrftoken\"\r\n\r\n";
+    body += this->m_token+"\r\n";
+
+    body += "--"+boundary+"\r\n";
+    body += "Content-Disposition: form-data; name=\"_uid\"\r\n\r\n";
+    body += this->m_username_id+"\r\n";
+
+    body += "--"+boundary+"\r\n";
+    body += "Content-Disposition: form-data; name=\"profile_pic\"; filename=\"profile_pic\"\r\n";
+    body += "Content-Transfer-Encoding: binary\r\n";
+    body += "Content-Type: application/octet-stream\r\n\r\n";
+
+    body += dataStream+"\r\n";
+    body += "--"+boundary+"--";
+
+    InstagramRequest *putPhotoReqest = new InstagramRequest();
+    putPhotoReqest->fileRquest("accounts/change_profile_picture/",boundary, body);
+    QObject::connect(putPhotoReqest,SIGNAL(replySrtingReady(QVariant)),this,SIGNAL(profilePictureChanged(QVariant)));
+
+    m_busy = false;
+    emit busyChanged();
 }
 
 void Instagram::removeProfilePicture()
 {
+    m_busy = true;
+    emit busyChanged();
+
     InstagramRequest *removeProfilePictureRequest = new InstagramRequest();
     QJsonObject data;
         data.insert("_uuid",        this->m_uuid);
@@ -518,12 +681,18 @@ void Instagram::removeProfilePicture()
         data.insert("_csrftoken",   "Set-Cookie: csrftoken="+this->m_token);
 
     QString signature = removeProfilePictureRequest->generateSignature(data);
-    removeProfilePictureRequest->request("maccounts/remove_profile_picture/",signature.toUtf8());
+    removeProfilePictureRequest->request("accounts/remove_profile_picture/",signature.toUtf8());
     QObject::connect(removeProfilePictureRequest,SIGNAL(replySrtingReady(QVariant)),this,SIGNAL(profilePictureDeleted(QVariant)));
+
+    m_busy = false;
+    emit busyChanged();
 }
 
 void Instagram::setPrivateAccount()
 {
+    m_busy = true;
+    emit busyChanged();
+
     InstagramRequest *setPrivateRequest = new InstagramRequest();
     QJsonObject data;
         data.insert("_uuid",        this->m_uuid);
@@ -533,6 +702,9 @@ void Instagram::setPrivateAccount()
     QString signature = setPrivateRequest->generateSignature(data);
     setPrivateRequest->request("accounts/set_private/",signature.toUtf8());
     QObject::connect(setPrivateRequest,SIGNAL(replySrtingReady(QVariant)),this,SIGNAL(setProfilePrivate(QVariant)));
+
+    m_busy = false;
+    emit busyChanged();
 }
 
 void Instagram::setPublicAccount()
@@ -613,7 +785,7 @@ void Instagram::editProfile(QString url, QString phone, QString first_name, QStr
 void Instagram::getUsernameInfo(QString usernameId)
 {
     InstagramRequest *getUsernameRequest = new InstagramRequest();
-    getUsernameRequest->request("users/"+usernameId+"/info/",NULL);
+    getUsernameRequest->request("users/"+usernameId+"/info/",NULL,false,true);
     QObject::connect(getUsernameRequest,SIGNAL(replySrtingReady(QVariant)),this,SIGNAL(usernameDataReady(QVariant)));
 }
 
@@ -624,11 +796,24 @@ void Instagram::getRecentActivity()
     QObject::connect(getRecentActivityRequest,SIGNAL(replySrtingReady(QVariant)),this,SIGNAL(recentActivityDataReady(QVariant)));
 }
 
-void Instagram::getFollowingRecentActivity()
+void Instagram::getFollowingRecentActivity(QString max_id)
 {
+    m_busy = true;
+    emit busyChanged();
+
+    QString target ="news/";
+
+    if(max_id.length() > 0)
+    {
+        target += "?max_id="+max_id+"&";
+    }
+
     InstagramRequest *getFollowingRecentRequest = new InstagramRequest();
-    getFollowingRecentRequest->request("news/?",NULL);
+    getFollowingRecentRequest->request(target,NULL);
     QObject::connect(getFollowingRecentRequest,SIGNAL(replySrtingReady(QVariant)),this,SIGNAL(followingRecentDataReady(QVariant)));
+
+    m_busy = false;
+    emit busyChanged();
 }
 
 void Instagram::getUserTags(QString usernameId)
@@ -665,20 +850,63 @@ void Instagram::tagFeed(QString tag, QString max_id)
     emit busyChanged();
 }
 
-void Instagram::getTimeLine(QString max_id)
+void Instagram::getTimeLine(QString max_id, QString seen_posts, bool pullToRefresh)
 {
     m_busy = true;
     emit busyChanged();
 
-    QString target ="feed/timeline/?rank_token="+this->m_rank_token+"&ranked_content=true&";
-
-    if(max_id.length() > 0)
-    {
-        target += "&max_id="+max_id;
-    }
-
     InstagramRequest *getTimeLineRequest = new InstagramRequest();
-    getTimeLineRequest->request(target,NULL);
+
+    QUuid s_uuid;
+    QString s_uuid_id = s_uuid.createUuid().toString();
+    s_uuid_id.remove('{').remove('}');
+
+    QString uuid = this->m_uuid;
+    uuid.remove('{').remove('}');
+
+    QUrlQuery data;
+        data.addQueryItem("_uuid",        uuid);
+        data.addQueryItem("_csrftoken",   this->m_token);
+        data.addQueryItem("is_prefetch", "0");
+        data.addQueryItem("phone_id", this->m_device_id);
+        data.addQueryItem("device_id", uuid);
+        data.addQueryItem("client_session_id", s_uuid_id);
+        data.addQueryItem("battery_level", "25");
+        data.addQueryItem("is_charging", "0");
+        data.addQueryItem("will_sound_on", "1");
+        data.addQueryItem("is_on_screen", "true");
+        data.addQueryItem("timezone_offset", "0");
+
+        data.addQueryItem("is_async_ads_in_headload_enabled", "0");
+        data.addQueryItem("is_async_ads_double_request", "0");
+        data.addQueryItem("is_async_ads_rti", "0");
+        data.addQueryItem("rti_delivery_backend", "0");
+
+        if (max_id.length() > 0) {
+            data.addQueryItem("reason", "pagination");
+            data.addQueryItem("max_id", max_id);
+            data.addQueryItem("is_pull_to_refresh", "0");
+        } else if (pullToRefresh == true) {
+            data.addQueryItem("reason", "pull_to_refresh");
+            data.addQueryItem("is_pull_to_refresh", "1");
+        } else {
+            data.addQueryItem("reason", "cold_start_fetch");
+            data.addQueryItem("is_pull_to_refresh", "0");
+
+            data.addQueryItem("feed_view_info", "");
+        }
+
+        if (seen_posts.length() > 0) {
+            data.addQueryItem("seen_posts", seen_posts);
+        } else if (max_id.length() == 0) {
+            data.addQueryItem("seen_posts", "");
+        }
+
+        if (max_id.length() == 0) {
+            data.addQueryItem("unseen_posts", "");
+        }
+
+    getTimeLineRequest->timelineRequest("feed/timeline/?", data.toString().toUtf8(), this->m_uuid);
     QObject::connect(getTimeLineRequest,SIGNAL(replySrtingReady(QVariant)),this,SIGNAL(timeLineDataReady(QVariant)));
 
     m_busy = false;
@@ -840,6 +1068,43 @@ void Instagram::userFriendship(QString userId)
     QString signature = userFriendshipRequest->generateSignature(data);
     userFriendshipRequest->request("friendships/show/"+userId+"/",signature.toUtf8());
     QObject::connect(userFriendshipRequest,SIGNAL(replySrtingReady(QVariant)),this,SIGNAL(userFriendshipDataReady(QVariant)));
+}
+
+void Instagram::pendingFriendships()
+{
+    InstagramRequest *pendingFriendshipsRequest = new InstagramRequest();
+    pendingFriendshipsRequest->request("friendships/pending/",NULL);
+    QObject::connect(pendingFriendshipsRequest,SIGNAL(replySrtingReady(QVariant)),this,SIGNAL(pendingFriendshipsDataReady(QVariant)));
+}
+
+void Instagram::approveFriendship(QString userId)
+{
+    InstagramRequest *approveFriendshipRequest = new InstagramRequest();
+    QJsonObject data;
+        data.insert("_uuid",        this->m_uuid);
+        data.insert("_uid",         this->m_username_id);
+        data.insert("_csrftoken",   "Set-Cookie: csrftoken="+this->m_token);
+        data.insert("user_id",      userId);
+        data.insert("radio_type",   "wifi-none");
+
+    QString signature = approveFriendshipRequest->generateSignature(data);
+    approveFriendshipRequest->request("friendships/approve/"+userId+"/",signature.toUtf8());
+    QObject::connect(approveFriendshipRequest,SIGNAL(replySrtingReady(QVariant)),this,SIGNAL(approveFriendshipDataReady(QVariant)));
+}
+
+void Instagram::rejectFriendship(QString userId)
+{
+    InstagramRequest *rejectFriendshipRequest = new InstagramRequest();
+    QJsonObject data;
+        data.insert("_uuid",        this->m_uuid);
+        data.insert("_uid",         this->m_username_id);
+        data.insert("_csrftoken",   "Set-Cookie: csrftoken="+this->m_token);
+        data.insert("user_id",      userId);
+        data.insert("radio_type",   "wifi-none");
+
+    QString signature = rejectFriendshipRequest->generateSignature(data);
+    rejectFriendshipRequest->request("friendships/ignore/"+userId+"/",signature.toUtf8());
+    QObject::connect(rejectFriendshipRequest,SIGNAL(replySrtingReady(QVariant)),this,SIGNAL(rejectFriendshipDataReady(QVariant)));
 }
 
 void Instagram::getLikedMedia(QString max_id)
@@ -1007,6 +1272,29 @@ void Instagram::directThread(QString threadId, QString cursor_id)
     QObject::connect(directThreadRequest,SIGNAL(replySrtingReady(QVariant)),this,SIGNAL(directThreadReady(QVariant)));
 }
 
+void Instagram::markDirectThreadItemSeen(QString threadId, QString threadItemId)
+{
+    m_busy = true;
+    emit busyChanged();
+
+    InstagramRequest *markDirectThreadItemSeenRequest = new InstagramRequest();
+
+    QJsonObject data;
+        data.insert("_uuid",        this->m_uuid);
+        data.insert("_csrftoken",   "Set-Cookie: csrftoken="+this->m_token);
+        data.insert("use_unified_inbox", "true");
+        data.insert("action",       "mark_seen");
+        data.insert("thread_id",    threadId);
+        data.insert("item_id",      threadItemId);
+
+    QString signature = markDirectThreadItemSeenRequest->generateSignature(data);
+    markDirectThreadItemSeenRequest->request("direct_v2/threads/"+threadId+"/items/"+threadItemId+"/seen/",signature.toUtf8());
+    QObject::connect(markDirectThreadItemSeenRequest,SIGNAL(replySrtingReady(QVariant)),this,SIGNAL(markDirectThreadItemSeenReady(QVariant)));
+
+    m_busy = false;
+    emit busyChanged();
+}
+
 void Instagram::directShare(QString mediaId, QString recipients, QString text)
 {
     m_busy = true;
@@ -1064,9 +1352,11 @@ void Instagram::directMessage(QString recipients, QString text, QString thread_i
     body += "Content-Disposition: form-data; name=\"client_context\"\r\n\r\n";
     body += uuid.createUuid().toString().replace("{","").replace("}","")+"\r\n";
 
-    body += "--"+boundary+"\r\n";
-    body += "Content-Disposition: form-data; name=\"thread_ids\"\r\n\r\n";
-    body += "[\""+thread_id+"\"]\r\n";
+    if (thread_id != "") {
+        body += "--"+boundary+"\r\n";
+        body += "Content-Disposition: form-data; name=\"thread_ids\"\r\n\r\n";
+        body += "[\""+thread_id+"\"]\r\n";
+    }
 
     body += "--"+boundary+"\r\n";
     body += "Content-Disposition: form-data; name=\"text\"\r\n\r\n";
@@ -1101,9 +1391,11 @@ void Instagram::directLike(QString recipients, QString thread_id)
     body += "Content-Disposition: form-data; name=\"client_context\"\r\n\r\n";
     body += uuid.createUuid().toString().replace("{","").replace("}","")+"\r\n";
 
-    body += "--"+boundary+"\r\n";
-    body += "Content-Disposition: form-data; name=\"thread_ids\"\r\n\r\n";
-    body += "[\""+thread_id+"\"]\r\n";
+    if (thread_id != "") {
+        body += "--"+boundary+"\r\n";
+        body += "Content-Disposition: form-data; name=\"thread_ids\"\r\n\r\n";
+        body += "[\""+thread_id+"\"]\r\n";
+    }
 
     body += "--"+boundary+"--";
 
@@ -1182,10 +1474,21 @@ void Instagram::suggestions()
     emit busyChanged();
 }
 
-void Instagram::getRankedRecipients()
+void Instagram::getRankedRecipients(QString query)
 {
+    QString target = "direct_v2/ranked_recipients/?mode=raven&show_threads=true&use_unified_inbox=false&";
+
+    if(query.length() > 0)
+    {
+        target += "&query="+query;
+    }
+    else
+    {
+        target += "&";
+    }
+
     InstagramRequest *getRankedRecipientsRequest = new InstagramRequest();
-    getRankedRecipientsRequest->request("direct_v2/ranked_recipients/?show_threads=true",NULL);
+    getRankedRecipientsRequest->request(target, NULL);
     QObject::connect(getRankedRecipientsRequest,SIGNAL(replySrtingReady(QVariant)),this,SIGNAL(rankedRecipientsDataReady(QVariant)));
 }
 
@@ -1271,14 +1574,33 @@ void Instagram::getUserReelsMediaFeed(QString user_id)
     m_busy = true;
     emit busyChanged();
 
-    QString target = "feed/user/"+user_id+"/reel_media/";
+    QString target = "feed/user/"+user_id+"/reel_media/?";
 
     InstagramRequest *getUserReelsMediaFeedRequest = new InstagramRequest();
-    getUserReelsMediaFeedRequest->request(target,NULL);
+    getUserReelsMediaFeedRequest->request(target,NULL,false,true);
     QObject::connect(getUserReelsMediaFeedRequest,SIGNAL(replySrtingReady(QVariant)),this,SIGNAL(userReelsMediaFeedDataReady(QVariant)));
 
     m_busy = false;
     emit busyChanged();
+}
+
+void Instagram::markStoryMediaSeen(QString reels)
+{
+    InstagramRequest *markStoryMediaSeenRequest = new InstagramRequest();
+    QJsonObject data;
+        data.insert("_uuid",        this->m_uuid);
+        data.insert("_uid",         this->m_username_id);
+        data.insert("_csrftoken",   "Set-Cookie: csrftoken="+this->m_token);
+
+        QJsonDocument jDoc = QJsonDocument::fromJson(reels.toLatin1());
+        data.insert("reels",        jDoc.object());
+
+        QJsonObject live_vods;
+        data.insert("live_vods",    live_vods);
+
+    QString signature = markStoryMediaSeenRequest->generateSignature(data);
+    markStoryMediaSeenRequest->request("media/seen/?reel=1&live_vod=0",signature.toUtf8(),true);
+    QObject::connect(markStoryMediaSeenRequest,SIGNAL(replySrtingReady(QVariant)),this,SIGNAL(markStoryMediaSeenDataReady(QVariant)));
 }
 
 // Camera

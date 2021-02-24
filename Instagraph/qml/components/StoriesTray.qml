@@ -1,5 +1,6 @@
 import QtQuick 2.4
 import Ubuntu.Components 1.3
+import QtGraphicalEffects 1.0
 
 Item {
     id: storiesTray
@@ -75,7 +76,7 @@ Item {
         model: storiesTrayModel
 
         delegate: ListItem {
-            width: units.gu(10)
+            width: storiesTray.width/5
             height: storyColumn.height
             divider.visible: false
 
@@ -101,7 +102,7 @@ Item {
                 Label {
                     text: user.username
                     color: "#000000"
-                    fontSize: "small"
+                    fontSize: "x-small"
                     anchors.horizontalCenter: parent.horizontalCenter
                     width: Math.min((parent.width+2), contentWidth)
                     clip: true

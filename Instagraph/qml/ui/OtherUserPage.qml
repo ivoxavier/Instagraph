@@ -55,6 +55,7 @@ Page {
     property bool more_available: true
     property bool next_coming: true
     property var last_like_id
+    property var last_save_id
     property bool clear_models: true
 
     property int current_user_section: 0
@@ -75,7 +76,6 @@ Page {
     }
 
     function userTimeLineDataFinished(data) {
-        //console.log(JSON.stringify(data))
         if (data.num_results == 0) {
             isEmpty = true;
         } else {
@@ -89,7 +89,7 @@ Page {
             more_available = data.more_available;
             next_coming = true;
 
-            worker.sendMessage({'feed': 'userPage', 'obj': data.items, 'model': userPhotosModel, 'commentsModel': userPhotosCommentsModel, 'clear_model': clear_models})
+            worker.sendMessage({'feed': 'userPage', 'obj': data.items, 'model': userPhotosModel, 'clear_model': clear_models})
 
             next_coming = false;
         }
@@ -162,7 +162,6 @@ Page {
         clear_models = false
         if (!next_id) {
             userPhotosModel.clear();
-            userPhotosCommentsModel.clear();
             next_max_id = 0
             clear_models = true
         }
@@ -227,10 +226,6 @@ Page {
     }
 
     ListModel {
-        id: userPhotosCommentsModel
-    }
-
-    ListModel {
         id: userPhotosModel
     }
 
@@ -275,7 +270,7 @@ Page {
                         id: uzimage
                         width: units.gu(10)
                         height: width
-                        source: status == Image.Error ? "../images/not_found_user.jpg" : profile_pic_url
+                        source: typeof profile_pic_url !== 'undefined' ? profile_pic_url : "../images/not_found_user.jpg"
                     }
 
                     Column {
@@ -383,7 +378,6 @@ Page {
                             visible: false
                             width: parent.width - units.gu(2)
                             anchors.horizontalCenter: parent.horizontalCenter
-                            color: UbuntuColors.green
                             text: i18n.tr("Following")
                             onTriggered: {
                                 latest_follow_request = usernameId
@@ -396,6 +390,7 @@ Page {
                             visible: false
                             width: parent.width - units.gu(2)
                             anchors.horizontalCenter: parent.horizontalCenter
+                            color: UbuntuColors.green
                             text: i18n.tr("Follow")
                             onTriggered: {
                                 latest_follow_request = usernameId
@@ -408,6 +403,7 @@ Page {
                             visible: false
                             width: parent.width - units.gu(2)
                             anchors.horizontalCenter: parent.horizontalCenter
+                            color: "#666666"
                             text: i18n.tr("Requested")
                             onTriggered: {
                                 latest_follow_request = usernameId
@@ -576,7 +572,7 @@ Page {
 
                 Loader {
                     id: viewLoader
-                    width: parent.width
+                    width: flickpage.width
                     sourceComponent: gridviewComponent
                 }
             }
@@ -628,19 +624,14 @@ Page {
     Component {
         id: listviewComponent
 
-        Column {
-            spacing: units.gu(4)
-            x: units.gu(1)
-            y: units.gu(1)
+        ListView {
             width: viewLoader.width
-
-            Repeater {
-                model: userPhotosModel
-
-                UserListFeedDelegate {
-                    id: entry_column_photos
-                    thismodel: userPhotosModel
-                }
+            height: contentHeight
+            interactive: false
+            model: userPhotosModel
+            delegate: ListFeedDelegate {
+                id: userPhotosDelegate
+                thismodel: userPhotosModel
             }
         }
     }
@@ -655,72 +646,9 @@ Page {
             Repeater {
                 model: userPhotosModel
 
-                Item {
+                GridFeedDelegate {
                     width: (viewLoader.width-units.gu(0.1))/3
                     height: width
-
-                    Image {
-                        property var bestImage: carousel_media_obj.count > 0 ? Helper.getBestImage(carousel_media_obj.get(0).image_versions2.candidates, parent.width) : Helper.getBestImage(image_versions2.candidates, parent.width)
-
-                        id: feed_image
-                        width: parent.width
-                        height: width
-                        source: bestImage.url
-                        fillMode: Image.PreserveAspectCrop
-                        sourceSize: Qt.size(width,height)
-                        clip: true
-                        asynchronous: true
-                        cache: true
-                        smooth: true
-                    }
-                    Icon {
-                        visible: media_type == 8
-                        width: units.gu(3)
-                        height: width
-                        name: "browser-tabs"
-                        color: "#ffffff"
-                        anchors.right: parent.right
-                        anchors.rightMargin: units.gu(1)
-                        anchors.top: parent.top
-                        anchors.topMargin: units.gu(1)
-                    }
-                    Icon {
-                        visible: media_type == 2
-                        width: units.gu(3)
-                        height: width
-                        name: "camcorder"
-                        color: "#ffffff"
-                        anchors.right: parent.right
-                        anchors.rightMargin: units.gu(1)
-                        anchors.top: parent.top
-                        anchors.topMargin: units.gu(1)
-                    }
-
-                    Item {
-                        width: activity2.width
-                        height: width
-                        anchors.centerIn: parent
-                        opacity: feed_image.status == Image.Loading
-
-                        Behavior on opacity {
-                            UbuntuNumberAnimation {
-                                duration: UbuntuAnimation.SlowDuration
-                            }
-                        }
-
-                        ActivityIndicator {
-                            id: activity2
-                            running: true
-                        }
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-
-                        onClicked: {
-                            pageStack.push(Qt.resolvedUrl("SinglePhoto.qml"), {photoId: id});
-                        }
-                    }
                 }
             }
         }
@@ -736,72 +664,9 @@ Page {
             Repeater {
                 model: userTagPhotosModel
 
-                Item {
+                GridFeedDelegate {
                     width: (viewLoader.width-units.gu(0.1))/3
                     height: width
-
-                    Image {
-                        property var bestImage: carousel_media_obj.count > 0 ? Helper.getBestImage(carousel_media_obj.get(0).image_versions2.candidates, parent.width) : Helper.getBestImage(image_versions2.candidates, parent.width)
-
-                        id: feed_image
-                        width: parent.width
-                        height: width
-                        source: bestImage.url
-                        fillMode: Image.PreserveAspectCrop
-                        sourceSize: Qt.size(width,height)
-                        clip: true
-                        asynchronous: true
-                        cache: true
-                        smooth: true
-                    }
-                    Icon {
-                        visible: media_type == 8
-                        width: units.gu(3)
-                        height: width
-                        name: "browser-tabs"
-                        color: "#ffffff"
-                        anchors.right: parent.right
-                        anchors.rightMargin: units.gu(1)
-                        anchors.top: parent.top
-                        anchors.topMargin: units.gu(1)
-                    }
-                    Icon {
-                        visible: media_type == 2
-                        width: units.gu(3)
-                        height: width
-                        name: "camcorder"
-                        color: "#ffffff"
-                        anchors.right: parent.right
-                        anchors.rightMargin: units.gu(2)
-                        anchors.top: parent.top
-                        anchors.topMargin: units.gu(2)
-                    }
-
-                    Item {
-                        width: activity2.width
-                        height: width
-                        anchors.centerIn: parent
-                        opacity: feed_image.status == Image.Loading
-
-                        Behavior on opacity {
-                            UbuntuNumberAnimation {
-                                duration: UbuntuAnimation.SlowDuration
-                            }
-                        }
-
-                        ActivityIndicator {
-                            id: activity2
-                            running: true
-                        }
-                    }
-
-                    MouseArea {
-                        anchors.fill: parent
-
-                        onClicked: {
-                            pageStack.push(Qt.resolvedUrl("SinglePhoto.qml"), {photoId: id});
-                        }
-                    }
                 }
             }
         }
@@ -853,10 +718,7 @@ Page {
             requestedButton.visible = data.outgoing_request
             unBlockButton.visible = data.blocking
         }
-    }
 
-    Connections{
-        target: instagram
         onFollowDataReady: {
             if (usernameId == latest_follow_request) {
                 var data = JSON.parse(answer);

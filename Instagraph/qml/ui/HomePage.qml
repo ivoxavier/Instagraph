@@ -24,13 +24,20 @@ Page {
     property bool more_available: true
     property bool next_coming: true
     property var last_like_id
+    property var last_save_id
     property bool clear_models: true
+
+    property var seen_posts: []
 
     property bool list_loading: false
 
     property bool isEmpty: false
 
+    property bool isPullToRefresh: false
+
     function mediaDataFinished(data) {
+        isPullToRefresh = false
+
         if (data.num_results == 0) {
             isEmpty = true;
         } else {
@@ -44,7 +51,15 @@ Page {
             more_available = data.more_available;
             next_coming = true;
 
-            worker.sendMessage({'feed': 'homePage', 'obj': data.feed_items, 'model': homePhotosModel, 'commentsModel': homePhotosCommentsModel, 'suggestionsModel': homeSuggestionsModel, 'clear_model': clear_models})
+            worker.sendMessage({'feed': 'homePage', 'obj': data.feed_items, 'model': homePhotosModel, 'suggestionsModel': homeSuggestionsModel, 'clear_model': clear_models})
+
+            for (var i = 0; i < data.feed_items.length; i++) {
+                var obj = data.feed_items[i];
+
+                if (typeof obj.media_or_ad !== 'undefined' && typeof obj.media_or_ad.media_type !== 'undefined') {
+                    seen_posts.push(obj.media_or_ad.id);
+                }
+            }
 
             next_coming = false;
         }
@@ -65,10 +80,10 @@ Page {
         clear_models = false
         if (!next_id) {
             homePhotosModel.clear()
-            next_max_id = 0
+            next_max_id = ""
             clear_models = true
         }
-        instagram.getTimeLine(next_id);
+        instagram.getTimeLine(next_id, seen_posts.join(','), isPullToRefresh);
     }
 
     BouncingProgressBar {
@@ -76,10 +91,6 @@ Page {
         z: 10
         anchors.top: homepage.header.bottom
         visible: instagram.busy || list_loading
-    }
-
-    ListModel {
-        id: homePhotosCommentsModel
     }
 
     ListModel {
@@ -111,14 +122,13 @@ Page {
         delegate: ListFeedDelegate {
             id: homePhotosDelegate
             thismodel: homePhotosModel
-            thiscommentsmodel: homePhotosCommentsModel
-            thissuggestionsmodel: homeSuggestionsModel
         }
         PullToRefresh {
             id: pullToRefresh
             refreshing: list_loading && homePhotosModel.count == 0
             onRefresh: {
                 list_loading = true
+                isPullToRefresh = true
                 getMedia()
             }
         }

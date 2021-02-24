@@ -37,7 +37,7 @@ Page {
                         id: feed_user_profile_image
                         width: parent.width
                         height: width
-                        source: user.profile_pic_url
+                        source: typeof user !== 'undefined' ? user.profile_pic_url : "../images/not_found_user.jpg"
                     }
 
                     MouseArea {
@@ -45,7 +45,7 @@ Page {
                             fill: parent
                         }
                         onClicked: {
-                            pageStack.push(Qt.resolvedUrl("../ui/OtherUserPage.qml"), {usernameString: user.username});
+                            pageStack.push(Qt.resolvedUrl("../ui/OtherUserPage.qml"), {usernameId: user.pk});
                         }
                     }
                 }
@@ -54,7 +54,7 @@ Page {
                     anchors {
                         verticalCenter: parent.verticalCenter
                     }
-                    text: user.username
+                    text: typeof user !== 'undefined' ? user.username : ""
                     font.weight: Font.DemiBold
                     wrapMode: Text.WordWrap
                     color: "#ffffff"
@@ -70,7 +70,7 @@ Page {
                             fill: parent
                         }
                         onClicked: {
-                            pageStack.push(Qt.resolvedUrl("../ui/OtherUserPage.qml"), {usernameString: user.username});
+                            pageStack.push(Qt.resolvedUrl("../ui/OtherUserPage.qml"), {usernameId: user.pk});
                         }
                     }
                 }
@@ -99,6 +99,13 @@ Page {
     property int progressTime: 0
 
     property var allUsers: []
+    property var allItems: []
+
+    property bool getting: false
+
+    function refreshTimers() {
+
+    }
 
     function userReelsMediaFeedDataFinished(data) {
         worker.sendMessage({'feed': 'userStoriesPage', 'obj': data.items, 'model': userStoriesModel, 'clear_model': true})
@@ -107,9 +114,37 @@ Page {
 
         timeAgo.text = Helper.milisecondsToString(data.items[0].taken_at, true)
 
-        progressTimer.stop()
-        progressTime = 0
-        timer.stop()
+        getting = false
+
+        // Mark Media Seen
+        var reels = {};
+
+        var myDate = new Date();
+        var time = myDate.getTime();
+        var seenAt = time - (3*data.items.length);
+
+        for (var i = 0; i < data.items.length; i++) {
+            var item = data.items[i];
+
+            var itemTakenAt = item.taken_at;
+            if (seenAt < itemTakenAt) {
+                seenAt = itemTakenAt + 2;
+            }
+
+            if (seenAt > time) {
+                seenAt = time;
+            }
+
+            var itemSourceId = item.user.pk;
+
+            var reelId = item.id + '_' + itemSourceId;
+
+            reels[reelId] = [itemTakenAt+'_'+seenAt];
+
+            seenAt += Math.floor(Math.random() * 3) + 1;
+        }
+
+        instagram.markStoryMediaSeen(JSON.stringify(reels));
     }
 
     WorkerScript {
@@ -136,6 +171,14 @@ Page {
         onTriggered: {
             userStoriesList.nextSlide()
         }
+        onRunningChanged: {
+            progressTime = 0
+            if (running == true) {
+                progressTimer.start()
+            } else {
+                progressTimer.stop()
+            }
+        }
     }
 
     Timer {
@@ -154,7 +197,7 @@ Page {
             right: parent.right
             bottom: parent.bottom
             top: parent.top
-            topMargin: units.gu(0.5)
+            topMargin: units.gu(0.3)
         }
         z: 100
         spacing: units.gu(0.5)
@@ -165,7 +208,7 @@ Page {
 
             ProgressBar {
                 width: (parent.width - (userStoriesModel.count-1)*units.gu(0.5))/userStoriesModel.count
-                value: index == userStoriesList.currentIndex ? progressTime : (index < userStoriesList.currentIndex ? 4000 : 0)
+                value: index == userStoriesList.currentIndex ? (getting ? 4000 : progressTime) : (index < userStoriesList.currentIndex ? 4000 : 0)
                 minimumValue: 0
                 maximumValue: 4000
             }
@@ -212,8 +255,6 @@ Page {
                 onStatusChanged: {
                     if (status == Image.Ready) {
                         if (userStoriesList.currentIndex == 0) {
-                            progressTime = 0
-                            progressTimer.start()
                             timer.start()
                         }
                     }
@@ -223,8 +264,7 @@ Page {
                     target: userStoriesList
                     onCurrentIndexChanged: {
                         if (feed_image.status == Image.Ready) {
-                            progressTime = 0
-                            progressTimer.start()
+                            timer.stop()
                             timer.start()
                         }
                     }
@@ -239,13 +279,10 @@ Page {
                     userStoriesList.nextSlide()
                 }
                 onPressAndHold: {
-                    timer.stop()
-                    progressTimer.stop()
+
                 }
                 onReleased: {
-                    timer.interval = 4000-progressTime
-                    timer.start()
-                    progressTimer.start()
+
                 }
             }
         }
@@ -257,13 +294,11 @@ Page {
                 timeAgo.text = Helper.milisecondsToString(userStoriesModel.get(userStoriesList.currentIndex).taken_at, true)
             } else {
                 if (allUsers.indexOf(userId) != allUsers.length-1) {
-                    progressTimer.stop()
-                    progressTime = 0
-                    timer.stop()
-
                     // next user
                     userId = allUsers[allUsers.indexOf(userId)+1]
                     getUserReelsMediaFeed()
+                    getting = true
+                    timer.stop()
                 }
             }
         }
@@ -275,13 +310,11 @@ Page {
                 timeAgo.text = Helper.milisecondsToString(userStoriesModel.get(userStoriesList.currentIndex).taken_at, true)
             } else {
                 if (allUsers.indexOf(userId) != 0) {
-                    progressTimer.stop()
-                    progressTime = 0
-                    timer.stop()
-
                     // prev user
                     userId = allUsers[allUsers.indexOf(userId)-1]
                     getUserReelsMediaFeed()
+                    getting = true
+                    timer.stop()
                 }
             }
         }
@@ -290,9 +323,11 @@ Page {
     Connections{
         target: instagram
         onUserReelsMediaFeedDataReady: {
-            //console.log(answer)
             var data = JSON.parse(answer);
             userReelsMediaFeedDataFinished(data)
+        }
+        onMarkStoryMediaSeenDataReady: {
+
         }
     }
 }

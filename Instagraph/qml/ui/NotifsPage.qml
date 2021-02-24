@@ -38,6 +38,11 @@ Page {
         }
     }
 
+    property string next_max_id: ""
+    property bool more_available: true
+    property bool next_coming: true
+    property bool clear_models: true
+
     property int current_notifs_section: 1
 
     property bool list_loading: false
@@ -45,13 +50,30 @@ Page {
 
     property bool isEmptyFollowing: false
 
+    property var followRequests
+    property bool hasFollowRequests: false
+
     function recentActivityDataFinished(data) {
+        // Follow Requests
+        if (typeof data.friend_request_stories != 'undefined' && data.friend_request_stories.length > 0) {
+            if (data.friend_request_stories[0].type == '6') {
+                hasFollowRequests = true
+                followRequests = {"request_count":data.friend_request_stories[0].args.request_count, "profile_pic":data.friend_request_stories[0].args.profile_image}
+            } else {
+                console.log(data.friend_request_stories)
+            }
+        } else {
+            followRequests = {}
+            hasFollowRequests = false
+        }
+
+        // Recent Activity
         if (data.new_stories.length) {
             new_notifs = true
         }
 
-        worker.sendMessage({'obj': data.new_stories, 'model': recentActivityModel, 'clear_model': true})
-        worker.sendMessage({'obj': data.old_stories, 'model': recentActivityModel, 'clear_model': false})
+        worker.sendMessage({'obj': data.new_stories, 'model': recentActivityModel, 'clear_model': true, 'hasFollowRequests': hasFollowRequests})
+        worker.sendMessage({'obj': data.old_stories, 'model': recentActivityModel, 'clear_model': false, 'hasFollowRequests': false})
 
         list_loading = false
     }
@@ -63,7 +85,17 @@ Page {
             isEmptyFollowing = false;
         }
 
-        worker.sendMessage({'obj': data.stories, 'model': followingRecentActivityModel, 'clear_model': true})
+        if (next_max_id == data.next_max_id) {
+            return false;
+        } else {
+            next_max_id = data.auto_load_more_enabled == true ? data.next_max_id : "";
+            more_available = data.auto_load_more_enabled;
+            next_coming = true;
+
+            worker.sendMessage({'obj': data.stories, 'model': followingRecentActivityModel, 'clear_model': clear_models})
+
+            next_coming = false;
+        }
 
         list_loading_following = false
     }
@@ -82,10 +114,15 @@ Page {
         instagram.getRecentActivity();
     }
 
-    function getFollowingRecentActivity()
+    function getFollowingRecentActivity(next_id)
     {
-        followingRecentActivityModel.clear()
-        instagram.getFollowingRecentActivity();
+        clear_models = false
+        if (!next_id) {
+            followingRecentActivityModel.clear()
+            next_max_id = 0
+            clear_models = true
+        }
+        instagram.getFollowingRecentActivity(next_id);
     }
 
     BouncingProgressBar {
@@ -107,9 +144,7 @@ Page {
         id: viewLoader
         anchors {
             left: parent.left
-            leftMargin: units.gu(1)
             right: parent.right
-            rightMargin: units.gu(1)
             bottom: parent.bottom
             bottomMargin: bottomMenu.height
             top: notifspage.header.bottom
@@ -130,135 +165,184 @@ Page {
             model: recentActivityModel
             delegate: ListItem {
                 id: recentActivityDelegate
+                height: list_type === 'follow_requests' ? followRequestsActivityHeader.height : recentActivityLoader.height
                 divider.visible: false
-                height: entry_column.height + units.gu(2)
 
                 Column {
-                    id: entry_column
-                    spacing: units.gu(1)
-                    width: parent.width
-                    y: units.gu(1)
+                    id: followRequestsActivityHeader
+                    visible: list_type === 'follow_requests'
+                    width: list_type === 'follow_requests' ? parent.width : 0
 
-                    Row {
-                        spacing: units.gu(1)
+                    Loader {
+                        id: followRequestsLoader
                         width: parent.width
-                        anchors.horizontalCenter: parent.horizontalCenter
+                        anchors {
+                            left: parent.left
+                            right: parent.right
+                        }
+                        visible: list_type === 'follow_requests'
+                        active: list_type === 'follow_requests'
 
-                        Item {
-                            width: units.gu(5)
-                            height: width
+                        sourceComponent: ListItem {
+                            height: layout.height
+                            divider.visible: false
+                            onClicked: {
+                                pageStack.push(Qt.resolvedUrl("FollowRequestsPage.qml"));
+                            }
+
+                            SlotsLayout {
+                                id: layout
+                                anchors.centerIn: parent
+
+                                padding.leading: 0
+                                padding.trailing: 0
+                                padding.top: units.gu(1)
+                                padding.bottom: units.gu(1)
+
+                                mainSlot: Row {
+                                    id: label
+                                    spacing: units.gu(1)
+                                    width: parent.width
+
+                                    CircleImage {
+                                        width: units.gu(5)
+                                        height: width
+                                        source: followRequests.profile_pic
+                                    }
+
+                                    Column {
+                                        width: parent.width
+                                        anchors.verticalCenter: parent.verticalCenter
+
+                                        Text {
+                                            text: i18n.tr("<span style='color:"+UbuntuColors.red+";'>%1</span> Follow Requests").arg(followRequests.request_count)
+                                            wrapMode: Text.WordWrap
+                                            font.weight: Font.DemiBold
+                                            textFormat: Text.RichText
+                                            width: parent.width
+                                        }
+
+                                        Text {
+                                            text: i18n.tr("Approve or ignore requests")
+                                            wrapMode: Text.WordWrap
+                                            font.weight: Font.ExtraLight
+                                            width: parent.width
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+
+                    ListItem {
+                        visible: list_type === 'follow_requests'
+                        height: list_type === 'follow_requests' ? activityHeaderLayout.height : 0
+                        divider.visible: false
+
+                        ListItemLayout {
+                            id: activityHeaderLayout
+
+                            title.text: i18n.tr("Activity")
+                            title.font.weight: Font.Normal
+                        }
+                    }
+                }
+
+                Loader {
+                    id: recentActivityLoader
+                    width: parent.width
+                    anchors {
+                        left: parent.left
+                        right: parent.right
+                    }
+                    visible: list_type === 'recent_activity'
+                    active: list_type === 'recent_activity'
+
+                    sourceComponent: SlotsLayout {
+                        id: layoutRecent
+                        anchors.centerIn: parent
+
+                        padding.leading: 0
+                        padding.trailing: 0
+                        padding.top: units.gu(1)
+                        padding.bottom: units.gu(1)
+
+                        mainSlot: Row {
+                            id: labelRecent
+                            spacing: units.gu(1)
+                            width: parent.width - (story.type == 3 ? (followButton.width+units.gu(4)) : (feed_image.width+units.gu(4)))
 
                             CircleImage {
-                                id: feed_user_profile_image
-                                width: parent.width
+                                width: units.gu(5)
                                 height: width
-                                source: story.type == 13 ? "image://theme/info" : (status == Image.Error ? "../images/not_found_user.jpg" : story.args.profile_image)
+                                source: story.type == 13 ? "image://theme/info" : (typeof story.args.profile_image !== 'undefined' ? story.args.profile_image : "../images/not_found_user.jpg")
+
+                                MouseArea {
+                                    anchors.fill: parent
+                                    onClicked: {
+                                        pageStack.push(Qt.resolvedUrl("../ui/OtherUserPage.qml"), {usernameId: story.args.profile_id});
+                                    }
+                                }
                             }
 
-                            Item {
-                                width: activity.width
-                                height: width
-                                anchors.centerIn: parent
-                                opacity: feed_user_profile_image.status == Image.Loading
+                            Column {
+                                width: parent.width - units.gu(6)
+                                anchors.verticalCenter: parent.verticalCenter
 
-                                Behavior on opacity {
-                                    UbuntuNumberAnimation {
-                                        duration: UbuntuAnimation.SlowDuration
+                                Text {
+                                    text: Helper.formatString(activity_text)
+                                    wrapMode: Text.WordWrap
+                                    width: parent.width
+                                    textFormat: Text.RichText
+                                    font.weight: story.type == 13 ? Font.DemiBold : Font.Normal
+                                    onLinkActivated: {
+                                        Scripts.linkClick(link, story.type == 1 ? story.args.media[0].id : 0)
                                     }
                                 }
 
-                                ActivityIndicator {
-                                    id: activity
-                                    running: true
-                                }
-                            }
-
-                            MouseArea {
-                                anchors {
-                                    fill: parent
-                                }
-                                onClicked: {
-                                    pageStack.push(Qt.resolvedUrl("../ui/OtherUserPage.qml"), {usernameId: story.args.profile_id});
-                                }
-                            }
-                        }
-
-                        Column {
-                            width: story.type == 4 ? parent.width - units.gu(6): parent.width - units.gu(12)
-                            anchors.verticalCenter: parent.verticalCenter
-
-                            Text {
-                                text: Helper.formatString(activity_text)
-                                wrapMode: Text.WordWrap
-                                width: parent.width
-                                textFormat: Text.RichText
-                                font.weight: story.type == 13 ? Font.DemiBold : Font.Normal
-                                onLinkActivated: {
-                                    Scripts.linkClick(link, story.type == 1 ? story.args.media[0].id : 0)
-                                }
-                            }
-
-                            Text {
-                                text: Helper.milisecondsToString(story.args.timestamp)
-                                wrapMode: Text.WordWrap
-                                width: parent.width
-                                textFormat: Text.RichText
-                                font.capitalization: Font.AllLowercase
-                            }
-                        }
-
-                        Item {
-                            visible: story.type == 1
-                            width: story.type == 1 ? units.gu(5) : 0
-                            height: width
-
-                            Image {
-                                id: feed_image
-                                width: parent.width
-                                height: width
-                                source: story.type == 1 ? story.args.media[0].image : ""
-                                fillMode: Image.PreserveAspectCrop
-                                sourceSize: Qt.size(width,height)
-                                asynchronous: true
-                                cache: true
-                                smooth: false
-                            }
-
-                            Item {
-                                width: activity2.width
-                                height: width
-                                anchors.centerIn: parent
-                                opacity: feed_image.status == Image.Loading
-
-                                Behavior on opacity {
-                                    UbuntuNumberAnimation {
-                                        duration: UbuntuAnimation.SlowDuration
-                                    }
-                                }
-
-                                ActivityIndicator {
-                                    id: activity2
-                                    running: true
-                                }
-                            }
-
-                            MouseArea {
-                                anchors.fill: parent
-
-                                onClicked: {
-                                    if (story.type == 1) {
-                                        pageStack.push(Qt.resolvedUrl("SinglePhoto.qml"), {photoId: story.args.media[0].id});
-                                    }
+                                Label {
+                                    text: Helper.milisecondsToString(story.args.timestamp)
+                                    fontSize: "small"
+                                    color: UbuntuColors.darkGrey
+                                    font.weight: Font.Light
+                                    font.capitalization: Font.AllLowercase
                                 }
                             }
                         }
 
                         FollowComponent {
+                            id: followButton
+                            height: units.gu(3.5)
                             visible: story.type == 3
-                            width: story.type == 3 ? units.gu(5) : 0
-                            height: units.gu(3)
                             friendship_var: story.args.inline_follow
                             userId: story.args.profile_id
+                            just_icon: isPhone ? true : false
+
+                            anchors.verticalCenter: parent.verticalCenter
+                            SlotsLayout.position: SlotsLayout.Trailing
+                            SlotsLayout.overrideVerticalPositioning: true
+                        }
+
+                        FeedImage {
+                            id: feed_image
+                            width: (story.type == 1 || story.type == 14) ? units.gu(5) : 0
+                            height: width
+                            visible: (story.type == 1 || story.type == 14)
+                            source: (story.type == 1 || story.type == 14) ? story.args.media[0].image : ""
+
+                            anchors.verticalCenter: parent.verticalCenter
+                            SlotsLayout.position: SlotsLayout.Trailing
+                            SlotsLayout.overrideVerticalPositioning: true
+
+                            MouseArea {
+                                anchors.fill: parent
+
+                                onClicked: {
+                                    if (story.type == 1 || story.type == 14) {
+                                        pageStack.push(Qt.resolvedUrl("SinglePhoto.qml"), {photoId: story.args.media[0].id});
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -284,55 +368,37 @@ Page {
             clip: true
             cacheBuffer: notifspage.height*2
             model: followingRecentActivityModel
+            onMovementEnded: {
+                if (atYEnd && more_available && !next_coming) {
+                    getFollowingRecentActivity(next_max_id)
+                }
+            }
             delegate: ListItem {
                 id: followingRecentActivityDelegate
+                height: layout.height
                 divider.visible: false
-                height: entry_column.height + units.gu(2)
 
-                Column {
-                    id: entry_column
-                    spacing: units.gu(1)
-                    width: parent.width
-                    y: units.gu(1)
+                SlotsLayout {
+                    id: layout
+                    anchors.centerIn: parent
 
-                    Row {
+                    padding.leading: 0
+                    padding.trailing: 0
+                    padding.top: units.gu(1)
+                    padding.bottom: units.gu(1)
+
+                    mainSlot: Row {
+                        id: label
                         spacing: units.gu(1)
-                        width: parent.width
-                        anchors.horizontalCenter: parent.horizontalCenter
+                        width: parent.width - (story.type == 1 ? feed_image.width : 0)
 
-                        Item {
+                        CircleImage {
                             width: units.gu(5)
                             height: width
-
-                            CircleImage {
-                                id: feed_user_profile_image
-                                width: parent.width
-                                height: width
-                                source: status == Image.Error ? "../images/not_found_user.jpg" : story.args.profile_image
-                            }
-
-                            Item {
-                                width: activity.width
-                                height: width
-                                anchors.centerIn: parent
-                                opacity: feed_user_profile_image.status == Image.Loading
-
-                                Behavior on opacity {
-                                    UbuntuNumberAnimation {
-                                        duration: UbuntuAnimation.SlowDuration
-                                    }
-                                }
-
-                                ActivityIndicator {
-                                    id: activity
-                                    running: true
-                                }
-                            }
+                            source: typeof story.args.profile_image !== 'undefined' ? story.args.profile_image : "../images/not_found_user.jpg"
 
                             MouseArea {
-                                anchors {
-                                    fill: parent
-                                }
+                                anchors.fill: parent
                                 onClicked: {
                                     pageStack.push(Qt.resolvedUrl("../ui/OtherUserPage.qml"), {usernameId: story.args.profile_id});
                                 }
@@ -340,7 +406,7 @@ Page {
                         }
 
                         Column {
-                            width: story.type == 2 || story.type == 4 ? parent.width - units.gu(6): parent.width - units.gu(12)
+                            width: parent.width - units.gu(6)
                             anchors.verticalCenter: parent.verticalCenter
 
                             Text {
@@ -348,101 +414,76 @@ Page {
                                 wrapMode: Text.WordWrap
                                 width: parent.width
                                 textFormat: Text.RichText
+                                font.weight: story.type == 13 ? Font.DemiBold : Font.Normal
                                 onLinkActivated: {
                                     Scripts.linkClick(link, story.type == 1 ? story.args.media[0].id : 0)
                                 }
                             }
 
-                            Text {
+                            Label {
                                 text: Helper.milisecondsToString(story.args.timestamp)
-                                wrapMode: Text.WordWrap
-                                width: parent.width
-                                textFormat: Text.RichText
+                                fontSize: "small"
+                                color: UbuntuColors.darkGrey
+                                font.weight: Font.Light
                                 font.capitalization: Font.AllLowercase
-                            }
-                        }
-
-                        Item {
-                            visible: story.type == 1
-                            width: story.type == 1 ? units.gu(5) : 0
-                            height: width
-
-                            Image {
-                                id: feed_image
-                                width: parent.width
-                                height: width
-                                source: story.type == 1 ? story.args.media[0].image : ""
-                                fillMode: Image.PreserveAspectCrop
-                                sourceSize: Qt.size(width,height)
-                                asynchronous: true
-                                cache: true
-                                smooth: false
                             }
 
                             Item {
-                                width: activity2.width
-                                height: width
-                                anchors.centerIn: parent
-                                opacity: feed_image.status == Image.Loading
-
-                                Behavior on opacity {
-                                    UbuntuNumberAnimation {
-                                        duration: UbuntuAnimation.SlowDuration
-                                    }
-                                }
-
-                                ActivityIndicator {
-                                    id: activity2
-                                    running: true
-                                }
+                                width: parent.width
+                                height: units.gu(1)
                             }
 
-                            MouseArea {
-                                anchors.fill: parent
+                            Grid {
+                                visible: story.type == 2
+                                width: parent.width
+                                columns: 6
+                                spacing: units.gu(0.2)
 
-                                onClicked: {
-                                    if (story.type == 1) {
-                                        pageStack.push(Qt.resolvedUrl("SinglePhoto.qml"), {photoId: story.args.media[0].id});
+                                Repeater {
+                                    model: Helper.objectLength(story.args.media) > 1 ? Helper.objectLength(story.args.media) : 0
+
+                                    Rectangle {
+                                        width: parent.width/7
+                                        height: width
+
+                                        FeedImage {
+                                            width: parent.width
+                                            height: width
+                                            source: story.args.media[index].image
+                                        }
+
+                                        MouseArea {
+                                            anchors.fill: parent
+
+                                            onClicked: {
+                                                if (story.type == 2) {
+                                                    pageStack.push(Qt.resolvedUrl("SinglePhoto.qml"), {photoId: story.args.media[index].id});
+                                                }
+                                            }
+                                        }
                                     }
                                 }
                             }
                         }
                     }
 
-                    Grid {
-                        visible: story.type == 2
-                        anchors.left: parent.left
-                        anchors.leftMargin: units.gu(6)
-                        width: parent.width - units.gu(6)
-                        columns: 6
-                        spacing: units.gu(0.2)
+                    FeedImage {
+                        id: feed_image
+                        width: (story.type == 1 || story.type == 14) ? units.gu(5) : 0
+                        height: width
+                        visible: (story.type == 1 || story.type == 14)
+                        source: (story.type == 1 || story.type == 14) ? story.args.media[0].image : ""
 
-                        Repeater {
-                            model: Helper.objectLength(story.args.media) > 1 ? Helper.objectLength(story.args.media) : 0
+                        anchors.verticalCenter: parent.verticalCenter
+                        SlotsLayout.position: SlotsLayout.Trailing
+                        SlotsLayout.overrideVerticalPositioning: true
 
-                            Rectangle {
-                                width: parent.width/7
-                                height: width
+                        MouseArea {
+                            anchors.fill: parent
 
-                                Image {
-                                    width: parent.width
-                                    height: width
-                                    source: story.args.media[index].image
-                                    fillMode: Image.PreserveAspectCrop
-                                    sourceSize: Qt.size(width,height)
-                                    asynchronous: true
-                                    cache: true
-                                    smooth: false
-                                }
-
-                                MouseArea {
-                                    anchors.fill: parent
-
-                                    onClicked: {
-                                        if (story.type == 2) {
-                                            pageStack.push(Qt.resolvedUrl("SinglePhoto.qml"), {photoId: story.args.media[index].id});
-                                        }
-                                    }
+                            onClicked: {
+                                if (story.type == 1 || story.type == 14) {
+                                    pageStack.push(Qt.resolvedUrl("SinglePhoto.qml"), {photoId: story.args.media[0].id});
                                 }
                             }
                         }

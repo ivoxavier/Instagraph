@@ -9,10 +9,10 @@ import "../js/Helper.js" as Helper
 import "../js/Scripts.js" as Scripts
 
 Page {
-    id: likedmediapage
+    id: savedmediapage
 
     header: PageHeader {
-        title: i18n.tr("Likes")
+        title: i18n.tr("Saved")
     }
 
     property string next_max_id: ""
@@ -24,7 +24,7 @@ Page {
 
     property bool isEmpty: false
 
-    function likedMediaDataFinished(data) {
+    function savedMediaDataFinished(data) {
         if (data.num_results == 0) {
             isEmpty = true;
         } else {
@@ -38,7 +38,7 @@ Page {
             more_available = data.more_available;
             next_coming = true;
 
-            worker.sendMessage({'feed': 'searchPage', 'obj': data.items, 'model': likedMediaModel, 'clear_model': clear_models})
+            worker.sendMessage({'feed': 'savedMediaPage', 'obj': data.items, 'model': savedMediaModel, 'clear_model': clear_models})
 
             next_coming = false;
         }
@@ -55,39 +55,38 @@ Page {
     }
 
     Component.onCompleted: {
-        getLikedMedia();
+        getSavedMedia();
     }
 
-    function getLikedMedia(next_id)
+    function getSavedMedia(next_id)
     {
         clear_models = false
         if (!next_id) {
-            likedMediaModel.clear()
+            savedMediaModel.clear()
             next_max_id = ""
             clear_models = true
         }
-        instagram.getLikedMedia(next_id);
+        instagram.getSavedFeed(next_id);
     }
 
     BouncingProgressBar {
         id: bouncingProgress
         z: 10
-        anchors.top: likedmediapage.header.bottom
+        anchors.top: savedmediapage.header.bottom
         visible: instagram.busy || list_loading
     }
 
     ListModel {
-        id: likedMediaModel
+        id: savedMediaModel
     }
 
     GridView {
         id: gridView
-        visible: !isEmpty
         anchors {
             left: parent.left
             right: parent.right
             bottom: parent.bottom
-            top: likedmediapage.header.bottom
+            top: savedmediapage.header.bottom
         }
         width: parent.width
         height: parent.height
@@ -95,10 +94,10 @@ Page {
         cellHeight: cellWidth
         onMovementEnded: {
             if (atYEnd && more_available && !next_coming) {
-                getLikedMedia(next_max_id);
+                getSavedMedia(next_max_id);
             }
         }
-        model: likedMediaModel
+        model: savedMediaModel
         delegate: GridFeedDelegate {
             width: gridView.cellWidth
             height: width
@@ -106,34 +105,19 @@ Page {
 
         PullToRefresh {
             id: pullToRefresh
-            refreshing: list_loading && likedMediaModel.count == 0
+            refreshing: list_loading && savedMediaModel.count == 0
             onRefresh: {
                 list_loading = true
-                getLikedMedia()
+                getSavedMedia()
             }
         }
     }
 
-    EmptyBox {
-        visible: isEmpty
-        width: parent.width
-        anchors {
-            top: likedmediapage.header.bottom
-            horizontalCenter: parent.horizontalCenter
-        }
-
-        icon: true
-        iconName: "stock_image"
-
-        description: i18n.tr("No photos or videos yet!")
-    }
-
     Connections{
         target: instagram
-        onLikedMediaDataReady: {
-            var new_answer = answer.replace(/([\[:])?(\d{18,})([,\}\]])/g, "$1\"$2\"$3");
-            var data = JSON.parse(new_answer);
-            likedMediaDataFinished(data);
+        onGetSavedFeedDataReady: {
+            var data = JSON.parse(answer);
+            savedMediaDataFinished(data);
         }
     }
 }

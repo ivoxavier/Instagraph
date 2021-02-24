@@ -45,6 +45,7 @@ MainView {
 
     readonly property bool isLandscape: width > height
     readonly property bool isWideScreen: (width > units.gu(120)) && isLandscape
+    readonly property bool isPhone: width <= units.gu(50)
 
     // Main Actions
     actions: [
@@ -133,11 +134,18 @@ MainView {
         } else {
             instagram.setUsername(username);
             instagram.setPassword(password);
-            instagram.login(true);
-            pageStack.push(tabs);
+
+            instagram.login(false, username, password, true);
 
             cacheImage.clean();
             cacheImage.init();
+
+            // Donate me dialog
+            var donateMeShowed = Storage.get("donateMe");
+            if (donateMeShowed === "" || typeof donateMeShowed == 'undefined') {
+                PopupUtils.open(donateMeComponent);
+                Storage.set("donateMe", "showed");
+            }
         }
     }
 
@@ -257,9 +265,40 @@ MainView {
         ContentDownloadDialog { }
     }
 
+    Component {
+        id: donateMeComponent
+
+        Dialog {
+            id: donateMeDialog
+            title: i18n.tr("Donate me")
+            text: i18n.tr("Donate to support me continue developing for Ubuntu.")
+
+            Row {
+                spacing: units.gu(1)
+                Button {
+                    width: parent.width/2 - units.gu(0.5)
+                    text: i18n.tr("Ignore")
+                    onClicked: PopupUtils.close(donateMeDialog)
+                }
+
+                Button {
+                    width: parent.width/2 - units.gu(0.5)
+                    text: i18n.tr("Donate")
+                    color: UbuntuColors.blue
+                    onClicked: {
+                        Qt.openUrlExternally("https://liberapay.com/turanmahmudov")
+                        PopupUtils.close(donateMeDialog)
+                    }
+                }
+            }
+        }
+    }
+
     Connections{
         target: instagram
         onProfileConnected: {
+            pageStack.push(tabs);
+
             logged_in = true
             my_usernameId = instagram.getUsernameId()
 
@@ -285,9 +324,9 @@ MainView {
         target: instagram
         onProfileConnectedFail: {
             if (!loginPageIsActive) {
-                loginPageIsActive = true;
-                pageStack.clear();
-                pageStack.push(Qt.resolvedUrl("qml/ui/LoginPage.qml"));
+                loginPageIsActive = true
+                pageStack.clear()
+                pageStack.push(Qt.resolvedUrl("qml/ui/LoginPage.qml"))
             }
         }
     }

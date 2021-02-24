@@ -21,6 +21,7 @@ Page {
     property bool more_available: true
     property bool next_coming: true
     property var last_like_id
+    property var last_save_id
     property bool clear_models: true
 
     property bool list_loading: false
@@ -33,7 +34,7 @@ Page {
             more_available = data.more_available ? data.more_available : false;
             next_coming = true;
 
-            worker.sendMessage({'feed': 'tagFeedPage', 'obj': data.items, 'model': tagFeedPhotosModel, 'commentsModel': tagFeedPhotosCommentsModel, 'clear_model': clear_models})
+            worker.sendMessage({'feed': 'tagFeedPage', 'obj': data.items, 'model': tagFeedPhotosModel, 'clear_model': clear_models})
 
             next_coming = false;
         }
@@ -71,10 +72,6 @@ Page {
     }
 
     ListModel {
-        id: tagFeedPhotosCommentsModel
-    }
-
-    ListModel {
         id: tagFeedPhotosModel
     }
 
@@ -101,7 +98,6 @@ Page {
         delegate: ListFeedDelegate {
             id: homePhotosDelegate
             thismodel: tagFeedPhotosModel
-            thiscommentsmodel: tagFeedPhotosCommentsModel
         }
         PullToRefresh {
             refreshing: list_loading && tagFeedPhotosModel.count == 0

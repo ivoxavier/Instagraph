@@ -3,96 +3,131 @@ WorkerScript.onMessage = function(msg) {
     var feed = msg.feed;
     var obj = msg.obj;
     var model = msg.model;
-    if (msg.commentsModel) {
-        var commentsModel = msg.commentsModel;
-    }
+
     if (msg.suggestionsModel) {
         var suggestionsModel = msg.suggestionsModel;
     }
 
     if (msg.clear_model) {
         model.clear();
-        if (msg.commentsModel) {
-            commentsModel.clear();
-        }
-        if (msg.suggestionsModel) {
-            suggestionsModel.clear();
-        }
     }
 
     // Object loop
     for (var i = 0; i < obj.length; i++) {
 
-        if (feed == 'homePage') {
+        if (feed === "homePage") {
 
+            var list_obj = {};
+
+            // Stories Feed Tray
             if (msg.clear_model && i == 0) {
-                model.append({"storiesFeedTray":true});
+                list_obj.list_type = 'stories_feed';
+
+                // Append to model
+                model.append(list_obj);
             }
 
-            // Suggestions
-            if (typeof obj[i].suggested_users != 'undefined') {
-
-                for (var k = 0; k < obj[i].suggested_users.suggestions.length; k++) {
-                    suggestionsModel.append(obj[i].suggested_users.suggestions[k]);
+            if (typeof obj[i].suggested_users !== 'undefined') {
+                // Suggestions
+                for (var k = 0; k < obj[i].suggested_users.suggestion_cards.length; k++) {
+                    suggestionsModel.append(obj[i].suggested_users.suggestion_cards[k].user_card);
                     suggestionsModel.sync();
                 }
 
-                model.append({"suggestions":true});
+                list_obj.list_type = 'suggested_users';
 
-            }
+                // Append to model & sync
+                model.append(list_obj);
+                model.sync();
+            } else if (typeof obj[i].media_or_ad !== 'undefined' && typeof obj[i].media_or_ad.injected !== 'undefined') {
 
-            if (typeof obj[i].media_or_ad != 'undefined' && typeof obj[i].media_or_ad.injected == 'undefined') {
+            } else if (typeof obj[i].media_or_ad !== 'undefined' && typeof obj[i].media_or_ad.injected === 'undefined') {
+                // Preview Comments
+                for (var j = 0; j < obj[i].media_or_ad.preview_comments.length; j++) {
+                    obj[i].media_or_ad.preview_comments[j].ctext = obj[i].media_or_ad.preview_comments[j].text;
+                }
 
-                obj[i].media_or_ad.video_url = typeof obj[i].media_or_ad.video_versions != 'undefined' ? obj[i].media_or_ad.video_versions[0].url : ''
-
+                // Carousel media
                 obj[i].media_or_ad.carousel_media_obj = typeof obj[i].media_or_ad.carousel_media != 'undefined' ? obj[i].media_or_ad.carousel_media : []
 
-                if (typeof obj[i].media_or_ad.image_versions2 == 'undefined') {
-                    obj[i].media_or_ad.image_versions2 = {}
-                }
+                // Images
+                obj[i].media_or_ad.images_obj = typeof obj[i].media_or_ad.image_versions2 != 'undefined' ? obj[i].media_or_ad.image_versions2 : {}
 
-                obj[i].media_or_ad.suggestions = false;
+                // Video
+                obj[i].media_or_ad.video_url = typeof obj[i].media_or_ad.video_versions != 'undefined' ? obj[i].media_or_ad.video_versions[0].url : ''
 
-                model.append(obj[i].media_or_ad);
+                list_obj = obj[i].media_or_ad;
+                list_obj.list_type = 'media_entry';
 
-                if (msg.commentsModel) {
-                    if (obj[i].media_or_ad.comment_count != 0) {
-                        for (var j = 0; j < obj[i].media_or_ad.max_num_visible_preview_comments; j++) {
-                            commentsModel.append({"c_image_id": obj[i].media_or_ad.pk, "comment": obj[i].media_or_ad.preview_comments[j]});
-                            commentsModel.sync();
-                        }
-                    }
-                }
-
+                // Append to model & sync
+                model.append(list_obj);
                 model.sync();
-
             }
 
+        } else if (feed === "savedMediaPage") {
+
+            var list_obj = {};
+
+            // Preview Comments
+            for (var j = 0; j < obj[i].media.max_num_visible_preview_comments; j++) {
+                if (typeof obj[i].media.preview_comments[j] !== 'undefined') {
+                    obj[i].media.preview_comments[j].ctext = obj[i].media.preview_comments[j].text;
+                }
+            }
+
+            // Photo Id
+            obj[i].media.photo_id = obj[i].media.id;
+
+            // Carousel media
+            obj[i].media.carousel_media_obj = typeof obj[i].media.carousel_media != 'undefined' ? obj[i].media.carousel_media : []
+
+            // Images
+            obj[i].media.images_obj = typeof obj[i].media.image_versions2 != 'undefined' ? obj[i].media.image_versions2 : {}
+
+            // Video
+            if (feed !== 'searchPage') {
+                obj[i].media.video_url = obj[i].media.video_versions ? obj[i].media.video_versions[0].url : ''
+            }
+
+            list_obj = obj[i].media;
+            list_obj.list_type = 'media_entry';
+
+            // Append to model & sync
+            model.append(list_obj);
+            model.sync();
+
         } else {
-            if (feed != 'searchPage') {
+
+            var list_obj = {};
+
+            // Preview Comments
+            for (var j = 0; j < obj[i].max_num_visible_preview_comments; j++) {
+                if (typeof obj[i].preview_comments[j] !== 'undefined') {
+                    obj[i].preview_comments[j].ctext = obj[i].preview_comments[j].text;
+                }
+            }
+
+            // Photo Id
+            obj[i].photo_id = obj[i].id;
+
+            // Carousel media
+            obj[i].carousel_media_obj = typeof obj[i].carousel_media != 'undefined' ? obj[i].carousel_media : []
+
+            // Images
+            obj[i].images_obj = typeof obj[i].image_versions2 != 'undefined' ? obj[i].image_versions2 : {}
+
+            // Video
+            if (feed !== 'searchPage') {
                 obj[i].video_url = obj[i].video_versions ? obj[i].video_versions[0].url : ''
             }
 
-            obj[i].carousel_media_obj = typeof obj[i].carousel_media != 'undefined' ? obj[i].carousel_media : []
+            list_obj = obj[i];
+            list_obj.list_type = 'media_entry';
 
-            if (typeof obj[i].image_versions2 == 'undefined') {
-                obj[i].image_versions2 = {}
-            }
-
-            obj[i].suggestions = false;
-
-            model.append(obj[i]);
-
-            if (msg.commentsModel) {
-                if (obj[i].comment_count != 0) {
-                    for (var j = 0; j < obj[i].max_num_visible_preview_comments; j++) {
-                        commentsModel.append({"c_image_id": obj[i].pk, "comment": obj[i].preview_comments[j]});
-                        commentsModel.sync();
-                    }
-                }
-            }
-
+            // Append to model & sync
+            model.append(list_obj);
             model.sync();
+
         }
     }
 }
